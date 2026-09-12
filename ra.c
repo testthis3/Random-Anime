@@ -1,3 +1,4 @@
+#define _GNU_SOURCE 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -43,21 +44,21 @@ void LineString(FILE *file, int line_num){
 
 }
 
-int query(FILE *file, char name[]){
-    
+int query(FILE *file, char name[]) {
     char line[MAX_LINE_LENGTH];
     
     rewind(file);
 
-    while (fgets(line, sizeof(line), file) != NULL){
-        
+    while (fgets(line, sizeof(line), file) != NULL) {
         line[strcspn(line, "\n")] = '\0';
         
-        if ( strcmp(name, line) == 0) return 1;
+        if (strcasestr(line, name) != NULL) { 
+            return 1; 
+        }
     }
-    
     return 0;
 }
+
 
 int main(int argc, char *argv[]) {
 
