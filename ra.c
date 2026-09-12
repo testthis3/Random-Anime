@@ -44,7 +44,7 @@ void LineString(FILE *file, int line_num){
 
 }
 
-int query(FILE *file, char name[]) {
+int IsThere(FILE *file, char name[]) {
     char line[MAX_LINE_LENGTH];
     
     rewind(file);
@@ -59,6 +59,24 @@ int query(FILE *file, char name[]) {
     return 0;
 }
 
+
+void query(FILE *file, char name[]) {
+    char line[MAX_LINE_LENGTH];
+    int count =0;
+    
+    rewind(file);
+
+    while (fgets(line, sizeof(line), file) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        
+        if (strcasestr(line, name) != NULL) { 
+            printf("%s\n", line); 
+            count++;
+        }
+    }
+    if (count == 0)
+        printf("%s is Not Found\n", name);
+}
 
 int main(int argc, char *argv[]) {
 
@@ -79,7 +97,7 @@ int main(int argc, char *argv[]) {
         LineString(file, rd_line);
     }
     else if (argc >= 3 && strcmp(argv[1], "add") == 0) {
-        int is_there = query(file, argv[2]);
+        int is_there = IsThere(file, argv[2]);
         
         if (is_there)
             printf("%s is already added\n", argv[2]);
@@ -93,13 +111,7 @@ int main(int argc, char *argv[]) {
     }
     else if (argc >= 3 && strcmp(argv[1], "query") == 0) {
         /* query anime */
-        int is_there = query(file, argv[2]);
-        
-        if (is_there)
-            printf("%s is Found\n", argv[2]);
-        else {
-            printf("%s is Not Found\n", argv[2]);
-        }
+       query(file, argv[2]);
     }
     else {
         printf("Usage:\n");
