@@ -146,29 +146,29 @@ int anime_info(const char *anime_name)
             display_title = romaji->valuestring;
         else if (cJSON_IsString(native) && (native->valuestring != NULL)) 
             display_title = native->valuestring;
-
-        printf("Title: %s\n", display_title);
-
-        printf("\n-------------------------------------\n\n");
+        
+        printf("\n──────────────────────────────────────\n");
+        printf("  %s\n", display_title);
+        printf("──────────────────────────────────────\n\n");
+       
+        //printf("Title: %s\n", display_title);
          
         cJSON *status = cJSON_GetObjectItemCaseSensitive(media, "status");
         if (cJSON_IsString(status) && (status->valuestring != NULL)) {
-             printf("Status: %s\n", status->valuestring);
+             printf("   Status   : %s\n", status->valuestring);
         }
 
-        printf("\n\n");
-        
         cJSON *episodes = cJSON_GetObjectItemCaseSensitive(media, "episodes");
         if (cJSON_IsNumber(episodes)) {
-             printf("Episodes: %d\n", episodes->valueint);
+             printf("   Episodes : %d\n", episodes->valueint);
         }
         
         cJSON *year = cJSON_GetObjectItemCaseSensitive(media, "seasonYear");
         if (cJSON_IsNumber(year)) {
-             printf("Release: %d\n", year->valueint);
+             printf("   Release  : %d\n", year->valueint);
         }
        
-        printf("Genres: ");
+        printf("   Genres   : ");
         // genres is an array
         cJSON *genre;
         cJSON_ArrayForEach(genre, genres)
@@ -176,11 +176,27 @@ int anime_info(const char *anime_name)
             printf("%s ", genre->valuestring);
         }
 
-        printf("\n\n");
-
         cJSON *plot = cJSON_GetObjectItemCaseSensitive(media, "description");
-        if (cJSON_IsString(plot) && (plot->valuestring != NULL)) {
-             printf("Plot: \n%s\n", plot->valuestring);
+        char *description = plot->valuestring;
+        
+        if (cJSON_IsString(plot) && (description != NULL)) {
+            char *p = description;
+
+            while ((p = strstr(p, "<br>")) != NULL) {
+                *p = ' ';
+                memmove(p + 1, p + 4, strlen(p + 4) +1);
+                p++;
+            }
+
+            printf("\n   Plot\n   ");
+            for (size_t i = 0; i < strlen(description); i++){
+                char c = description[i];
+                putchar(c);
+                if ( c == '.')
+                    printf("\n  ");
+            } 
+            printf("\n");
+
         }
 
     }
