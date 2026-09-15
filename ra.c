@@ -4,17 +4,200 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <curl/curl.h>
+#include <cjson/cJSON.h>
 
 #define MAX_LINE_LENGTH 256
 #define ANIME_DIR "/Projects/C/RandomAnime/"
 #define ANIME_FILE "AnimeList.txt"
 
-/*
- * Return:
- *     $HOME/Projects/C/RandomAnime/
- *
- * The returned string must be freed by the caller.
- */
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
+
+// function for WRITEFUNCTION option in curl_easy_setopt()
+size_t CallBack(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+    char *ptr = realloc(mem->memory, mem->size + realsize +1);
+    if (ptr == NULL){
+        printf("Not enough memory (realloc returned NULL)\n");
+        return 0; 
+    }
+
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+    
+    return realsize;
+}
+
+int anime_info(const char *anime_name) 
+{
+    struct MemoryStruct chunk;
+
+    chunk.memory = malloc(1);
+    if (chunk.memory == NULL){
+        perror("malloc");
+        return 1;
+    }
+
+    chunk.size = 0;
+
+    /* Initialize global curl environment */
+    curl_global_init(CURL_GLOBAL_ALL);
+    CURL *curl_handle = curl_easy_init();
+
+    if (!curl_handle) 
+    {
+        fprintf(stderr, "Failed to initialize CURL\n");
+        free(chunk.memory);
+        return 1;
+    }
+
+    /* Define the Anilist GraphQl query */
+    const char *graphql_query = 
+        "query ($searchName: String) {"
+        "  Media (search: $searchName, type: ANIME) {"
+        "    title {"
+        "      english"
+        "      romaji"
+        "      native"
+        "    }"
+        "    status"
+        "    seasonYear"
+        "    episodes"
+        "    genres"
+        "    description"
+        "  }"
+        "}";
+    
+    /* Build the JSON payload usin cJSON */
+    cJSON *root = cJSON_CreateObject(); // creates {}
+    cJSON_AddStringToObject(root, "query", graphql_query); // creates { "query":{ graphql }}
+
+    cJSON *variables = cJSON_CreateObject(); 
+    cJSON_AddStringToObject(variables, "searchName", anime_name); 
+
+    cJSON_AddItemToObject(root, "variables", variables);
+
+    char *json_payload = cJSON_Print(root); // in json format 
+
+    /* Configure http headers */
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Accept: application/json");
+   
+    /* Configure CURL options */
+    curl_easy_setopt(curl_handle, CURLOPT_URL,"https://graphql.anilist.co");
+    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, json_payload);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, CallBack);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+
+    /* Execute the network request */
+    CURLcode result = curl_easy_perform(curl_handle);
+    if (result != CURLE_OK) 
+    {
+        fprintf(stderr, "curl_easy_perform failed: %s\n", curl_easy_strerror(result));
+    } 
+    else 
+    {
+        /* parse chunk.memory cause it contains anime info in a json format */
+        cJSON *parsed_data = cJSON_Parse(chunk.memory);
+        
+        if (parsed_data == NULL) 
+        {
+            const char *error_ptr = cJSON_GetErrorPtr();
+            if (error_ptr != NULL) 
+            {
+                fprintf(stderr, "Error before: %s\n", error_ptr);
+            }
+            return 1;
+        }
+
+        cJSON *data = cJSON_GetObjectItem(parsed_data, "data");
+        cJSON *media = cJSON_GetObjectItem(data, "Media");
+      
+        if (!data)
+            fprintf(stderr, "data Anime not found or invalid API response\n");
+            
+        if (!data || !media) {
+            fprintf(stderr, "Anime not found or invalid API response\n");
+            cJSON_Delete(parsed_data);
+            return 1;
+        }
+        cJSON *title = cJSON_GetObjectItem(media, "title");
+        cJSON *genres = cJSON_GetObjectItem(media, "genres");
+
+        /* Print available title in this order: english, romaji, native, anime_name (name entered by user)*/
+        cJSON *english = cJSON_GetObjectItemCaseSensitive(title, "english");
+        cJSON *romaji = cJSON_GetObjectItemCaseSensitive(title, "romaji");
+        cJSON *native = cJSON_GetObjectItemCaseSensitive(title, "native");
+        
+        const char *display_title = anime_name;
+
+        if (cJSON_IsString(english) && (english->valuestring != NULL)) 
+            display_title = english->valuestring;
+        else if (cJSON_IsString(romaji) && (romaji->valuestring != NULL)) 
+            display_title = romaji->valuestring;
+        else if (cJSON_IsString(native) && (native->valuestring != NULL)) 
+            display_title = native->valuestring;
+
+        printf("Title: %s\n", display_title);
+
+        printf("\n-------------------------------------\n\n");
+         
+        cJSON *status = cJSON_GetObjectItemCaseSensitive(media, "status");
+        if (cJSON_IsString(status) && (status->valuestring != NULL)) {
+             printf("Status: %s\n", status->valuestring);
+        }
+
+        printf("\n\n");
+        
+        cJSON *episodes = cJSON_GetObjectItemCaseSensitive(media, "episodes");
+        if (cJSON_IsNumber(episodes)) {
+             printf("Episodes: %d\n", episodes->valueint);
+        }
+        
+        cJSON *year = cJSON_GetObjectItemCaseSensitive(media, "seasonYear");
+        if (cJSON_IsNumber(year)) {
+             printf("Release: %d\n", year->valueint);
+        }
+       
+        printf("Genres: ");
+        // genres is an array
+        cJSON *genre;
+        cJSON_ArrayForEach(genre, genres)
+        {
+            printf("%s ", genre->valuestring);
+        }
+
+        printf("\n\n");
+
+        cJSON *plot = cJSON_GetObjectItemCaseSensitive(media, "description");
+        if (cJSON_IsString(plot) && (plot->valuestring != NULL)) {
+             printf("Plot: \n%s\n", plot->valuestring);
+        }
+
+    }
+    
+    /* Clean up allocated resources */
+    free(json_payload);
+    cJSON_Delete(root);
+    curl_slist_free_all(headers);
+    free(chunk.memory);
+    curl_easy_cleanup(curl_handle);
+    curl_global_cleanup();
+    
+    return 0;
+}
+
+
+
 char *get_dir_path(void)
 {
     const char *home = getenv("HOME");
@@ -38,12 +221,6 @@ char *get_dir_path(void)
     return path;
 }
 
-/*
- * Return:
- *     $HOME/Projects/C/RandomAnime/<filename>
- *
- * The returned string must be freed by the caller.
- */
 char *get_path(const char *filename)
 {
     char *dir_path = get_dir_path();
@@ -91,27 +268,29 @@ int get_lines_number(FILE *file)
 {
     int ch;
     int lines = 0;
+    int line_has_content = 0;
 
     rewind(file);
 
     while ((ch = fgetc(file)) != EOF) {
+        
+        line_has_content = 1;
+        
         if (ch == '\n')
             lines++;
     }
+
+    /* if the last line doesn't end with '\n' */
+    if (line_has_content && ch != '\n')
+        lines++;
 
     rewind(file);
 
     return lines;
 }
 
-/* Return a random number between 1 and max. */
-int get_random_number(int max)
-{
-    return rand() % max + 1;
-}
-
 /* Print a specific line from the file. */
-void print_line(FILE *file, int line_number)
+char *print_line(FILE *file, int line_number)
 {
     char line[MAX_LINE_LENGTH];
     int current_line = 1;
@@ -119,15 +298,32 @@ void print_line(FILE *file, int line_number)
     rewind(file);
 
     while (fgets(line, sizeof(line), file) != NULL) {
+        
         if (current_line == line_number) {
-            printf("%s", line);
-            return;
-        }
+        
+            line[strcspn(line, "\n")] = '\0';
+            
+            size_t size = strlen(line) + 1;
 
+            char *result= malloc(size);
+            
+            if (result == NULL){
+                perror("malloc");
+                free(result);
+                return NULL;
+            }
+
+            strcpy(result, line);
+
+            return result;
+        }
+        
         current_line++;
     }
-
+    
     fprintf(stderr, "Error: Line %d not found\n", line_number);
+    
+    return NULL;
 }
 
 /* Add an anime if it doesn't already exist. */
@@ -145,19 +341,15 @@ int add_anime(FILE *file, const char *name)
             return 0;
         }
     }
-
-    /*
-     * We have finished reading the file.
-     * Reposition the stream before writing.
-     */
+    
     fseek(file, 0, SEEK_END);
-
-    if (fprintf(file, "%s\n", name) < 0) {
+   /* fprintf return the number of bytes printed on success */ 
+    if (fprintf(file, "%s", name) < 0){
         perror("fprintf");
         return 1;
     }
 
-    printf("%s was added successfully to the anime list\n", name);
+    printf("%s was added successfully\n", name);
 
     return 0;
 }
@@ -241,15 +433,8 @@ int remove_anime(FILE *file, const char *name)
         return 0;
     }
 
-    /*
-     * Close the original file before replacing it.
-     */
     fclose(file);
 
-    /*
-     * On Linux, rename() can replace the existing file.
-     * This is better than remove() followed by rename().
-     */
     if (rename(temp_path, path) != 0) {
         perror("rename");
         free(temp_path);
@@ -272,6 +457,7 @@ void print_usage(const char *program)
     printf("  %s add \"anime name\"\n", program);
     printf("  %s remove \"anime name\"\n", program);
     printf("  %s query \"anime name\"\n", program);
+    printf("  %s info \"anime name\"\n", program);
 }
 
 int main(int argc, char *argv[])
@@ -289,8 +475,18 @@ int main(int argc, char *argv[])
         if (lines == 0) {
             printf("The anime list is empty.\n");
         } else {
-            int random_line = get_random_number(lines);
-            print_line(file, random_line);
+            int random_line = rand() % lines + 1;
+            
+            char *anime_name = print_line(file, random_line);
+            if (anime_name == NULL) {
+                fclose(file);
+                return EXIT_FAILURE;
+            }           
+            
+            // printf("%s", anime_name);
+            anime_info(anime_name);
+            
+            free(anime_name);
         }
 
         fclose(file);
@@ -311,15 +507,14 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "remove") == 0) {
         result = remove_anime(file, argv[2]);
 
-        /*
-         * remove_anime() closes the file itself
-         * when it successfully replaces it.
-         */
         if (result == 0)
             return EXIT_SUCCESS;
     }
     else if (strcmp(argv[1], "query") == 0) {
         query_anime(file, argv[2]);
+    }
+    else if (strcmp(argv[1], "info") == 0){
+        anime_info(argv[2]);
     }
     else {
         print_usage(argv[0]);
